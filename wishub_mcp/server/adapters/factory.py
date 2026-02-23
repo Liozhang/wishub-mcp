@@ -26,6 +26,7 @@ class AIAdapterFactory:
         # 智谱模型
         "glm-4": ZhipuAdapter,
         "glm-4-turbo": ZhipuAdapter,
+        "glm-4.7": ZhipuAdapter,
         "glm-3-turbo": ZhipuAdapter,
     }
 
@@ -120,7 +121,7 @@ class AIAdapterFactory:
             "https://open.bigmodel.cn/api/coding/paas/v4"  # 与 clawd 配置一致
         )
         if zhipu_api_key:
-            for model_id in ["glm-4", "glm-4-turbo", "glm-3-turbo"]:
+            for model_id in ["glm-4", "glm-4-turbo", "glm-4.7", "glm-3-turbo"]:
                 try:
                     adapter = cls.create_adapter(
                         model_id,

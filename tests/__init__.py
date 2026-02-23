@@ -1,0 +1,3 @@
+"""
+WisHub MCP Tests
+"""

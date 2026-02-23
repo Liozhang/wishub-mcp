@@ -2,21 +2,15 @@
 Test MCP API
 """
 import pytest
+from unittest.mock import AsyncMock, patch
 from httpx import AsyncClient
 
 from wishub_mcp.protocol.models import MCPInvokeRequest, ContextType
 
 
 @pytest.mark.asyncio
-async def test_mcp_invoke_success(client: AsyncClient, monkeypatch):
+async def test_mcp_invoke_success(client: AsyncClient):
     """测试成功的 MCP 调用"""
-    # Mock WisHub 核心客户端
-    async def mock_get_context(*args, **kwargs):
-        return {
-            "wisunit_id": "test_001",
-            "content": "这是测试上下文内容"
-        }
-
     # Mock AI 适配器
     from wishub_mcp.server.adapters import AIAdapterRegistry, BaseAIAdapter
     from typing import Dict, Any
@@ -36,25 +30,41 @@ async def test_mcp_invoke_success(client: AsyncClient, monkeypatch):
     mock_adapter = MockAdapter("gpt-4", "test_key")
     AIAdapterRegistry.register("gpt-4", mock_adapter)
 
-    # 创建请求
-    request = MCPInvokeRequest(
-        context_id="test_001",
-        model_id="gpt-4",
-        prompt="测试问题",
-        context_type=ContextType.WISUNIT
-    )
+    # 创建 mock WisHub 客户端
+    mock_wishub_client = AsyncMock()
+    mock_wishub_client.get_knowledge_context.return_value = {
+        "wisunit_id": "test_001",
+        "content": "这是测试上下文内容"
+    }
 
-    # 跳过 API 密钥验证
-    response = await client.post(
-        "/api/v1/mcp/invoke",
-        json=request.model_dump(),
-        headers={"X-API-Key": "test_key"}
-    )
+    # Patch 模块级别的 wishub_client
+    import wishub_mcp.server.routes.mcp as mcp_routes
+    original_client = mcp_routes.wishub_client
+    mcp_routes.wishub_client = mock_wishub_client
 
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "success"
-    assert data["response"] == "这是 AI 生成的回答"
+    try:
+        # 创建请求
+        request = MCPInvokeRequest(
+            context_id="test_001",
+            model_id="gpt-4",
+            prompt="测试问题",
+            context_type=ContextType.WISUNIT
+        )
+
+        # 跳过 API 密钥验证
+        response = await client.post(
+            "/api/v1/mcp/invoke",
+            json=request.model_dump(),
+            headers={"X-API-Key": "test_key"}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "success"
+        assert data["response"] == "这是 AI 生成的回答"
+    finally:
+        # 恢复原始客户端
+        mcp_routes.wishub_client = original_client
 
 
 @pytest.mark.asyncio

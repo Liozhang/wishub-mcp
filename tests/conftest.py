@@ -2,12 +2,13 @@
 WisHub MCP Pytest Configuration
 """
 import pytest
+import pytest_asyncio
 from typing import AsyncGenerator
 from httpx import AsyncClient, ASGITransport
 from wishub_mcp.server.app import app
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def client() -> AsyncGenerator[AsyncClient, None]:
     """创建测试客户端"""
     transport = ASGITransport(app=app)

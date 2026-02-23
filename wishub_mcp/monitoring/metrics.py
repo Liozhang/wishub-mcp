@@ -74,15 +74,11 @@ def setup_metrics(app: FastAPI) -> Instrumentator:
     instrumentator = Instrumentator(
         should_group_status_codes=False,
         should_ignore_untemplated=True,
-        should_instrument_requests_inprogress=True,
-        should_instrument_requests=True,
         excluded_handlers=["/metrics", "/health", "/"],
         env_var_name="ENABLE_METRICS",
-        inprogress_name="wishub_mcp_http_requests_inprogress",
-        inprogress_labels=True,
     )
 
-    instrumentator.instrument(app)
+    instrumentator.instrument(app).expose(app)
 
     return instrumentator
 

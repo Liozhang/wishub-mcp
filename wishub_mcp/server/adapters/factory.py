@@ -30,13 +30,19 @@ class AIAdapterFactory:
     }
 
     @classmethod
-    def create_adapter(cls, model_id: str, api_key: str) -> BaseAIAdapter:
+    def create_adapter(
+        cls,
+        model_id: str,
+        api_key: str,
+        base_url: str = None
+    ) -> BaseAIAdapter:
         """
         创建适配器实例
 
         Args:
             model_id: 模型 ID
             api_key: API 密钥
+            base_url: 自定义 API 端点（仅智谱支持）
 
         Returns:
             AI 适配器实例
@@ -48,9 +54,14 @@ class AIAdapterFactory:
             raise ValueError(f"不支持的模型: {model_id}")
 
         adapter_class = cls.MODEL_ADAPTERS[model_id]
-        adapter = adapter_class(model_id, api_key)
 
-        logger.info("adapter_created", model_id=model_id)
+        # 智谱适配器支持自定义 base_url
+        if adapter_class == ZhipuAdapter:
+            adapter = adapter_class(model_id, api_key, base_url=base_url)
+        else:
+            adapter = adapter_class(model_id, api_key)
+
+        logger.info("adapter_created", model_id=model_id, base_url=base_url)
 
         return adapter
 
@@ -102,10 +113,20 @@ class AIAdapterFactory:
 
         # 智谱适配器
         zhipu_api_key = config.get("zhipu_api_key") or config.get("ZHIPU_API_KEY")
+        # 读取智谱 base_url，默认使用 clawd 配置的 coding 端点
+        zhipu_base_url = (
+            config.get("zhipu_base_url") or
+            config.get("ZHIPU_BASE_URL") or
+            "https://open.bigmodel.cn/api/coding/paas/v4"  # 与 clawd 配置一致
+        )
         if zhipu_api_key:
             for model_id in ["glm-4", "glm-4-turbo", "glm-3-turbo"]:
                 try:
-                    adapter = cls.create_adapter(model_id, zhipu_api_key)
+                    adapter = cls.create_adapter(
+                        model_id,
+                        zhipu_api_key,
+                        base_url=zhipu_base_url
+                    )
                     AIAdapterRegistry.register(model_id, adapter)
                 except Exception as e:
                     logger.warning(

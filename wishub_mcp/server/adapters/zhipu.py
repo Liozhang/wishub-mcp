@@ -1,8 +1,7 @@
 """
-ZhipuAI GLM-4 Adapter
+ZhipuAI GLM-4 Adapter (支持自定义 Base URL)
 """
-from typing import Dict, Any
-import httpx
+from typing import Dict, Any, Optional
 from zhipuai import ZhipuAI
 
 from .base import BaseAIAdapter
@@ -11,10 +10,30 @@ from .base import BaseAIAdapter
 class ZhipuAdapter(BaseAIAdapter):
     """智谱 GLM-4 适配器"""
 
-    def __init__(self, model_id: str, api_key: str):
-        """初始化智谱适配器"""
+    def __init__(
+        self,
+        model_id: str,
+        api_key: str,
+        base_url: Optional[str] = None
+    ):
+        """
+        初始化智谱适配器
+
+        Args:
+            model_id: 模型 ID
+            api_key: API 密钥
+            base_url: 自定义 API 端点（默认使用智谱标准端点）
+                     推荐使用 coding 端点: https://open.bigmodel.cn/api/coding/paas/v4
+        """
         super().__init__(model_id, api_key)
-        self.client = ZhipuAI(api_key=api_key)
+
+        # 使用自定义 base_url 或默认值
+        if base_url is None:
+            # 默认使用智谱的 coding API 端点（与 clawd 配置一致）
+            base_url = "https://open.bigmodel.cn/api/coding/paas/v4"
+
+        self.client = ZhipuAI(api_key=api_key, base_url=base_url)
+        self.base_url = base_url
 
     async def generate(
         self,

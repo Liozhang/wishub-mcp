@@ -167,6 +167,11 @@ WISHUB_CORE_URL=http://localhost:9000
 OPENAI_API_KEY=your_openai_api_key
 ZHIPU_API_KEY=your_zhipu_api_key
 
+# 智谱 API 端点（可选）
+# 默认使用智谱的 coding API 端点（与 clawd 配置一致）
+# 如果需要使用其他端点，可以修改此配置
+ZHIPU_BASE_URL=https://open.bigmodel.cn/api/coding/paas/v4
+
 # 日志配置
 LOG_LEVEL=DEBUG
 ```

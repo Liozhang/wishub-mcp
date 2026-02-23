@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  wishub-mcp:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: wishub-mcp
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_NAME=wishub-mcp
+      - APP_ENV=production
+      - DEBUG=false
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - API_PREFIX=/api/v1
+      - AUTH_REQUIRED=true
+      - AUTH_HEADER=X-API-Key
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - LOG_LEVEL=INFO
+    depends_on:
+      - redis
+    networks:
+      - wishub-network
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: wishub-mcp-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - wishub-network
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+
+networks:
+  wishub-network:
+    driver: bridge

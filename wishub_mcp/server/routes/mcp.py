@@ -1,11 +1,9 @@
 """
 MCP Invocation Routes
 """
-import logging
 from typing import Dict, Any
 
 from fastapi import APIRouter, HTTPException, status, Depends, Header
-from fastapi.responses import JSONResponse
 
 from wishub_mcp.protocol.models import (
     MCPInvokeRequest,
@@ -15,8 +13,10 @@ from wishub_mcp.protocol.models import (
 from wishub_mcp.server.adapters import AIAdapterRegistry
 from wishub_mcp.server.wishub_core import WisHubCoreClient
 from wishub_mcp.config import settings
+from wishub_mcp.monitoring.logging_config import get_logger
+from wishub_mcp.monitoring.metrics import record_ai_invocation
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # 创建路由
 router = APIRouter(prefix="/mcp", tags=["MCP"])
@@ -63,12 +63,16 @@ async def invoke_mcp(
     Raises:
         HTTPException: 如果发生错误
     """
+    import time
+
+    start_time = time.time()
+
     try:
         # 1. 获取 AI 适配器
         try:
             adapter = AIAdapterRegistry.get(request.model_id)
         except ValueError as e:
-            logger.warning(f"不支持的模型: {request.model_id}")
+            logger.warning("unsupported_model", model_id=request.model_id)
             return MCPInvokeResponse(
                 status="error",
                 message=f"不支持的模型: {request.model_id}",
@@ -83,18 +87,23 @@ async def invoke_mcp(
         context_str = ""
 
         try:
-            logger.info(f"获取上下文: {request.context_id} (类型: {request.context_type})")
+            logger.info(
+                "fetching_context",
+                context_id=request.context_id,
+                context_type=request.context_type.value
+            )
             context_data = await wishub_client.get_knowledge_context(
                 context_id=request.context_id,
                 context_type=request.context_type.value
             )
-            logger.info(f"成功获取上下文: {len(str(context_data))} 字符")
+            context_len = len(str(context_data))
+            logger.info("context_fetched", length=context_len)
 
             # 构建上下文字符串用于提示
             context_str = _build_context_string(context_data)
 
         except RuntimeError as e:
-            logger.warning(f"获取上下文失败: {e}")
+            logger.warning("context_fetch_failed", error=str(e))
             return MCPInvokeResponse(
                 status="error",
                 message=f"获取上下文失败: {str(e)}",
@@ -104,7 +113,7 @@ async def invoke_mcp(
                 }
             )
         except Exception as e:
-            logger.error(f"获取上下文时发生意外错误: {e}")
+            logger.error("context_fetch_error", error=str(e))
             return MCPInvokeResponse(
                 status="error",
                 message=f"获取上下文失败",
@@ -114,19 +123,57 @@ async def invoke_mcp(
                 }
             )
 
-        # 3. 计算 Token 数量
+        # 3. 尝试从缓存获取响应（性能优化）
+        try:
+            from wishub_mcp.server.cache import get_cache_manager
+            cache_manager = get_cache_manager()
+
+            if cache_manager and cache_manager.enabled:
+                cached_response = await cache_manager.get(
+                    model_id=request.model_id,
+                    prompt=request.prompt,
+                    context_data=context_data,
+                    temperature=request.temperature,
+                    max_tokens=request.max_tokens
+                )
+
+                if cached_response:
+                    logger.info("cache_hit", model_id=request.model_id)
+
+                    # 记录指标
+                    duration = time.time() - start_time
+                    record_ai_invocation(
+                        model=request.model_id,
+                        status="cached",
+                        duration=duration,
+                        total_tokens=cached_response.get("tokens_used", 0)
+                    )
+
+                    return MCPInvokeResponse(
+                        status="success",
+                        context=context_data,
+                        response=cached_response["response"],
+                        tokens_used=cached_response["tokens_used"],
+                        cached=True  # 标记为缓存响应
+                    )
+        except Exception as e:
+            logger.warning("cache_check_failed", error=str(e))
+
+        # 4. 计算 Token 数量
         try:
             prompt_tokens = await adapter.count_tokens(request.prompt)
             context_tokens = await adapter.count_tokens(context_str)
             total_input_tokens = prompt_tokens + context_tokens
         except Exception as e:
-            logger.warning(f"计算 Token 数量失败: {e}")
+            logger.warning("token_count_failed", error=str(e))
             total_input_tokens = 0
 
-        # 4. 检查 Token 限制
+        # 5. 检查 Token 限制
         if total_input_tokens > request.max_tokens * 0.9:  # 90% 阈值
             logger.warning(
-                f"输入 Token 数量接近上限: {total_input_tokens}/{request.max_tokens}"
+                "input_too_long",
+                total_input_tokens=total_input_tokens,
+                max_tokens=request.max_tokens
             )
             return MCPInvokeResponse(
                 status="error",
@@ -137,9 +184,9 @@ async def invoke_mcp(
                 }
             )
 
-        # 5. 生成 AI 响应
+        # 6. 生成 AI 响应
         try:
-            logger.info(f"调用 AI 模型: {request.model_id}")
+            logger.info("generating_response", model_id=request.model_id)
             response_text = await adapter.generate(
                 prompt=request.prompt,
                 context=context_data,
@@ -150,21 +197,60 @@ async def invoke_mcp(
             # 计算输出 Token 数量
             output_tokens = await adapter.count_tokens(response_text)
             total_tokens = total_input_tokens + output_tokens
+            duration = time.time() - start_time
 
             logger.info(
-                f"AI 响应生成成功: {output_tokens} 输出 tokens, "
-                f"{total_tokens} 总 tokens"
+                "response_generated",
+                model_id=request.model_id,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+                duration=f"{duration:.3f}s"
             )
 
-            return MCPInvokeResponse(
+            # 构建响应数据
+            response_data = MCPInvokeResponse(
                 status="success",
                 context=context_data,
                 response=response_text,
                 tokens_used=total_tokens
+            ).model_dump()
+
+            # 缓存响应（性能优化）
+            try:
+                if cache_manager and cache_manager.enabled:
+                    await cache_manager.set(
+                        model_id=request.model_id,
+                        prompt=request.prompt,
+                        context_data=context_data,
+                        temperature=request.temperature,
+                        max_tokens=request.max_tokens,
+                        response_data={
+                            "response": response_text,
+                            "tokens_used": total_tokens
+                        }
+                    )
+            except Exception as e:
+                logger.warning("cache_set_failed", error=str(e))
+
+            # 记录指标
+            record_ai_invocation(
+                model=request.model_id,
+                status="success",
+                duration=duration,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=output_tokens,
+                total_tokens=total_tokens
             )
 
+            return response_data
+
         except RuntimeError as e:
-            logger.error(f"AI 模型调用失败: {e}")
+            logger.error("ai_generation_failed", error=str(e))
+            record_ai_invocation(
+                model=request.model_id,
+                status="error",
+                duration=time.time() - start_time
+            )
             return MCPInvokeResponse(
                 status="error",
                 message=f"AI 模型调用失败: {str(e)}",
@@ -174,7 +260,12 @@ async def invoke_mcp(
                 }
             )
         except Exception as e:
-            logger.error(f"生成响应时发生意外错误: {e}")
+            logger.error("response_generation_error", error=str(e))
+            record_ai_invocation(
+                model=request.model_id,
+                status="error",
+                duration=time.time() - start_time
+            )
             return MCPInvokeResponse(
                 status="error",
                 message="生成响应失败",
@@ -185,7 +276,7 @@ async def invoke_mcp(
             )
 
     except Exception as e:
-        logger.error(f"MCP 调用发生未处理的异常: {e}")
+        logger.error("invoke_error", error=str(e))
         return MCPInvokeResponse(
             status="error",
             message="内部服务器错误",

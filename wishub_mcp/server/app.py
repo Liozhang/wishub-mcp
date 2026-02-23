@@ -37,6 +37,15 @@ async def lifespan(app: FastAPI):
     # 设置应用信息指标
     set_app_info(settings.APP_VERSION)
 
+    # 初始化缓存（性能优化）
+    try:
+        logger.info("initializing_cache")
+        from wishub_mcp.server.cache import init_cache
+        await init_cache(enabled=True)
+        logger.info("cache_initialized")
+    except Exception as e:
+        logger.warning("cache_initialization_failed", error=str(e))
+
     # 初始化 AI 适配器
     try:
         logger.info("initializing_ai_adapters")
@@ -52,6 +61,13 @@ async def lifespan(app: FastAPI):
 
     # 关闭
     logger.info("shutting_down", app_name=settings.APP_NAME)
+
+    # 关闭缓存
+    try:
+        from wishub_mcp.server.cache import close_cache
+        await close_cache()
+    except Exception as e:
+        logger.warning("cache_close_failed", error=str(e))
 
 
 # 创建 FastAPI 应用

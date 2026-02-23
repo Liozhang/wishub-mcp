@@ -4,11 +4,12 @@ AI Adapter Factory
 from typing import Dict, Any
 import logging
 
+from wishub_mcp.monitoring.logging_config import get_logger
 from .base import BaseAIAdapter, AIAdapterRegistry
 from .openai import OpenAIAdapter
 from .zhipu import ZhipuAdapter
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class AIAdapterFactory:
@@ -49,7 +50,7 @@ class AIAdapterFactory:
         adapter_class = cls.MODEL_ADAPTERS[model_id]
         adapter = adapter_class(model_id, api_key)
 
-        logger.info(f"已创建 {model_id} 适配器")
+        logger.info("adapter_created", model_id=model_id)
 
         return adapter
 
@@ -66,7 +67,7 @@ class AIAdapterFactory:
             raise TypeError("适配器必须继承自 BaseAIAdapter")
 
         cls.MODEL_ADAPTERS[model_id] = adapter_class
-        logger.info(f"已注册 {model_id} 适配器")
+        logger.info("adapter_registered", model_id=model_id)
 
     @classmethod
     def list_supported_models(cls) -> list:
@@ -93,7 +94,11 @@ class AIAdapterFactory:
                     adapter = cls.create_adapter(model_id, openai_api_key)
                     AIAdapterRegistry.register(model_id, adapter)
                 except Exception as e:
-                    logger.warning(f"注册 OpenAI {model_id} 失败: {e}")
+                    logger.warning(
+                        "adapter_registration_failed",
+                        model_id=model_id,
+                        error=str(e)
+                    )
 
         # 智谱适配器
         zhipu_api_key = config.get("zhipu_api_key") or config.get("ZHIPU_API_KEY")
@@ -103,6 +108,28 @@ class AIAdapterFactory:
                     adapter = cls.create_adapter(model_id, zhipu_api_key)
                     AIAdapterRegistry.register(model_id, adapter)
                 except Exception as e:
-                    logger.warning(f"注册智谱 {model_id} 失败: {e}")
+                    logger.warning(
+                        "adapter_registration_failed",
+                        model_id=model_id,
+                        error=str(e)
+                    )
 
-        logger.info(f"已初始化 {len(AIAdapterRegistry._adapters)} 个 AI 适配器")
+        adapter_count = len(AIAdapterRegistry._adapters)
+        logger.info("adapters_initialized", count=adapter_count)
+
+    @classmethod
+    def get_redis_client(cls):
+        """
+        获取 Redis 客户端（用于健康检查）
+
+        Returns:
+            Redis 客户端实例
+        """
+        try:
+            from wishub_mcp.server.cache import get_cache_manager
+            cache_manager = get_cache_manager()
+            if cache_manager and cache_manager._client:
+                return cache_manager._client
+        except Exception as e:
+            logger.warning("redis_client_get_failed", error=str(e))
+        return None
